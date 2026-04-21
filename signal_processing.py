@@ -85,18 +85,19 @@ def process(data):
     timestamp = struct.unpack('<I',payload[0:4])[0]
 
     #packet size in bytes - 2 bytes
-    packet_size = struct.unpack('<H', payload[4:6])[0]
+    packet_size = struct.unpack('<H', payload[4:6])[0]+1
 
     #CRC - 2 bytes
-    crc = struct.unpack('<H', payload[-2:])[0]
-    computed_crc = compute_crc(payload[:-2])
+    crc = struct.unpack('<H', payload[6+packet_size:6+packet_size+2])[0]
+    computed_crc = compute_crc(payload[:6+packet_size])
     if crc!=computed_crc:
-        print("CRC mismatch")
+        print("CRC mismatch", crc, computed_crc)
         return
-    
-    chunks_data = payload[6:-2]
+    print("crc ok")
+
+    chunks_data = payload[6:6+packet_size]
     pos = 0
-    while pos+2 < len(chunks_data):
+    while pos < len(chunks_data):
         #chunk ID - 1 byte
         chunk_id = chunks_data[pos]
         id.append(chunk_id)
@@ -158,7 +159,7 @@ def prikazi_signal (signal: np.ndarray, naslov: string, startInd: int, endInd: i
     else:
         plt.plot(time, interval, label="Value")
     plt.xlabel("time [s]")
-    plt.ylabel("Rotational speed [°/s]")
+    plt.ylabel("Amplitude")
     plt.title(naslov)
     plt.legend()
     plt.show()
@@ -176,9 +177,7 @@ def sestavi_podatke (packets: np.ndarray, id:int):
     return signal, Fvz
 
 if __name__ == "__main__":
-    #with open("dataTestBIN.bin", "rb") as f:
-    with open("putty.bin", "rb") as f:
-    #with open("naloga_1_log.BIN", "rb") as f:
+    with open("Audio_logs/LOG6", "rb") as f:
         data = f.read()
         separate(data)
 
@@ -203,6 +202,5 @@ if __name__ == "__main__":
             else:
                 signal[i] = ALAW_DECODE_TABLE[signal[i]]
 
-    print(signal)
-    prikazi_signal(signal, "Accelerometer", None, None, graph_id)
-    prikazi_signal(signal, "Accelerometer zoomed", 150, 2000, graph_id)
+    prikazi_signal(signal, "Microphone", None, None, graph_id)
+    prikazi_signal(signal, "Microphone zoomed", int(Fvz*0.7), int(Fvz*1.3), graph_id)
