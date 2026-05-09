@@ -30,6 +30,8 @@ ALAW_DECODE_TABLE = np.array([
   25088,26112,27136,28160,29184,30208,31232,32256,
 ], dtype=np.int16)
 
+EVENT_SIZE = 6000
+
 id = []
 chunks = []
 timestamps = []
@@ -170,8 +172,13 @@ def najdi_dogodek(signal: np.ndarray, Fvz: float,
         return 0, len(signal)
 
     first_win = int(np.argmax(active))
-    last_win  = int(len(active) - 1 - np.argmax(active[::-1]))
-    return first_win * win, (last_win + 1) * win
+    start = first_win * win
+    if start + EVENT_SIZE >len(signal):
+        end = len(signal)
+        start = len(signal) - EVENT_SIZE
+    else:
+        end = (start + EVENT_SIZE)
+    return start, end
 
 
 def prikazi_signal(signal: np.ndarray, naslov: string, startInd: int, endInd: int, Fvz: float, normalize_16bit: bool = False):
@@ -226,7 +233,7 @@ def sestavi_podatke(packets: np.ndarray, id: int = 4):
     return signal, Fvz
 
 if __name__ == "__main__":
-    with open("odpadki\\papir\\karton\\karton_skatla2", "rb") as f:
+    with open("odpadki\\papir\\karton\\karton_skatla3", "rb") as f:
         data = f.read()
         separate(data)
 
