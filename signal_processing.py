@@ -3,14 +3,32 @@ from attr import dataclass
 import numpy as np
 import matplotlib.pyplot as plt
 import string
-
+import sounddevice as sd
+import scipy.signal as sp_signal
 @dataclass
 class Paket:
 	id: int      
 	time: float    
 	data: np.ndarray
 
-ALAW_DECODE_TABLE = np.array([           8,    24,    40,    56,    72,    88,   104,   120,   136,         152,   168,   184,   200,   216,   232,   248,   264,   280,         296,   312,   328,   344,   360,   376,   392,   408,   424,         440,   456,   472,   488,   504,   528,   560,   592,   624,         656,   688,   720,   752,   784,   816,   848,   880,   912,         944,   976,  1008,  1056,  1120,  1184,  1248,  1312,  1376,        1440,  1504,  1568,  1632,  1696,  1760,  1824,  1888,  1952,        2016,  2112,  2240,  2368,  2496,  2624,  2752,  2880,  3008,        3136,  3264,  3392,  3520,  3648,  3776,  3904,  4032,  4224,        4480,  4736,  4992,  5248,  5504,  5760,  6016,  6272,  6528,        6784,  7040,  7296,  7552,  7808,  8064,  8448,  8960,  9472,        9984, 10496, 11008, 11520, 12032, 12544, 13056, 13568, 14080,       14592, 15104, 15616, 16128, 16896, 17920, 18944, 19968, 20992,       22016, 23040, 24064, 25088, 26112, 27136, 28160, 29184, 30208,       31232, 32256], dtype=np.int16)
+ALAW_DECODE_TABLE = np.array([
+      8,   24,   40,   56,   72,   88,  104,  120,
+    136,  152,  168,  184,  200,  216,  232,  248,
+    264,  280,  296,  312,  328,  344,  360,  376,
+    392,  408,  424,  440,  456,  472,  488,  504,
+    528,  560,  592,  624,  656,  688,  720,  752,
+    784,  816,  848,  880,  912,  944,  976, 1008,
+   1056, 1120, 1184, 1248, 1312, 1376, 1440, 1504,
+   1568, 1632, 1696, 1760, 1824, 1888, 1952, 2016,
+   2112, 2240, 2368, 2496, 2624, 2752, 2880, 3008,
+   3136, 3264, 3392, 3520, 3648, 3776, 3904, 4032,
+   4224, 4480, 4736, 4992, 5248, 5504, 5760, 6016,
+   6272, 6528, 6784, 7040, 7296, 7552, 7808, 8064,
+   8448, 8960, 9472, 9984,10496,11008,11520,12032,
+  12544,13056,13568,14080,14592,15104,15616,16128,
+  16896,17920,18944,19968,20992,22016,23040,24064,
+  25088,26112,27136,28160,29184,30208,31232,32256,
+], dtype=np.int16)
 
 id = []
 chunks = []
@@ -111,38 +129,52 @@ def process(data):
         #chunk data - chunk_size
         chunk_data = chunks_data[pos+4:pos+4+chunk_size]
 
-        # Parse sensor samples (3x int16_t per sample or 1x int16_t)
         samples = []
-        if chunk_id == 1 or chunk_id == 2 or chunk_id == 3:
-            for i in range(0, chunk_size, 6):
-                x, y, z = struct.unpack('<hhh', chunk_data[i:i+6])
-                samples.append((x, y, z))
-        elif chunk_id == 4:
-            for i in range(0, chunk_size):
-                try:
-                    value = struct.unpack('<b', chunk_data[i:i+1])[0]
-                except struct.error:
-                    print(f"Error unpacking data at position {i}")
-                    break
-                samples.append(value)
+        for i in range(0, chunk_size):
+            try:
+                value = struct.unpack('<b', chunk_data[i:i+1])[0]
+            except struct.error:
+                print(f"Error unpacking data at position {i}")
+                break
+            samples.append(value)
         timestamps.append(timestamp)
         chunks.append(samples)
         pos += 4 + chunk_size
 
 
-#grafi
-     
-def normalize (vektor: np.ndarray, id:int) -> np.ndarray:
-    if id == 1:
-        return vektor*8.75e-3
-    if id == 2:
-        return vektor*6.125e-5
-    if id == 3:
-        return vektor*1.5e-3
-    return vektor
 
 
-def prikazi_signal (signal: np.ndarray, naslov: string, startInd: int, endInd: int, id: int):
+def najdi_dogodek(signal: np.ndarray, Fvz: float,
+                  window_s: float = 0.025,
+                  peak_fraction: float = 0.05) -> tuple[int, int]:
+    """
+    Returns (startInd, endInd) spanning exactly the samples where RMS energy
+    exceeds peak_fraction * peak_RMS.
+    """
+    win = max(1, int(window_s * Fvz))
+    mag = signal.astype(np.float64)
+
+    # high-pass filter to remove DC drift (brez tega se slabo doloci dogodek)
+    b, hp = 0.995, np.zeros_like(mag)
+    for i in range(1, len(mag)):
+        hp[i] = b * (hp[i-1] + mag[i] - mag[i-1])
+    mag = np.abs(hp)
+
+    #compute RMS energy (root mean square )
+    n_wins = len(mag) // win
+    energy = np.array([np.sqrt(np.mean(mag[i*win:(i+1)*win]**2)) for i in range(n_wins)])
+    threshold = peak_fraction * energy.max()
+    active = energy > threshold
+
+    if not np.any(active):
+        return 0, len(signal)
+
+    first_win = int(np.argmax(active))
+    last_win  = int(len(active) - 1 - np.argmax(active[::-1]))
+    return first_win * win, (last_win + 1) * win
+
+
+def prikazi_signal(signal: np.ndarray, naslov: string, startInd: int, endInd: int, Fvz: float, normalize_16bit: bool = False):
     if startInd is None:
         startInd = 0
     if endInd is None:
@@ -151,22 +183,39 @@ def prikazi_signal (signal: np.ndarray, naslov: string, startInd: int, endInd: i
     interval = signal[startInd:endInd]
     time = np.arange(startInd, endInd) / Fvz
 
-    plt.figure()
-    if id != 4:
-        plt.plot(time,[num[0] for num in interval], label="X")
-        plt.plot(time, [num[1] for num in interval], label="Y")
-        plt.plot(time, [num[2] for num in interval], label="Z")
-    else:
-        plt.plot(time, interval, label="Value")
-    plt.xlabel("time [s]")
-    plt.ylabel("Amplitude")
-    plt.title(naslov)
-    plt.legend()
+    if normalize_16bit:
+        sig_float = interval.astype(np.float64)
+        peak = np.max(sig_float)
+        low = np.min(sig_float)
+        if peak > 0:
+            interval = (sig_float - low)/(peak - low) * 65535 - 32768
+        interval = interval.astype(np.int16)
+
+    fig, (ax_sig, ax_spec) = plt.subplots(2, 1, figsize=(12, 8))
+
+    ax_sig.plot(time, interval, label="Value")
+    ax_sig.set_xlabel("time [s]")
+    ax_sig.set_ylabel("Amplitude")
+    ax_sig.set_title(naslov)
+    ax_sig.legend()
+
+    # spectrogram (STFT)
+    spec_sig = np.array(interval, dtype=np.float64)
+        
+    nperseg = min(256, max(16, len(spec_sig) // 8))
+    f_spec, t_spec, Sxx = sp_signal.spectrogram(spec_sig, fs=Fvz, nperseg=nperseg)
+    im = ax_spec.pcolormesh(t_spec, f_spec, 10 * np.log10(Sxx + 1e-10), shading="gouraud", cmap="inferno")
+    fig.colorbar(im, ax=ax_spec)
+    ax_spec.set_xlabel("Time [s]")
+    ax_spec.set_ylabel("Frequency [Hz]")
+    ax_spec.set_title("Spectrogram (STFT)")
+
+    plt.tight_layout()
     plt.show()
 
-def sestavi_podatke (packets: np.ndarray, id:int): 
+def sestavi_podatke(packets: np.ndarray, id: int = 4):
     timestamps = [packet.time for packet in packets if packet.id==id]
-    signal = normalize(np.concatenate([packet.data for packet in packets if packet.id==id], axis=0), id)
+    signal = np.concatenate([packet.data for packet in packets if packet.id==id], axis=0)
     
     #izracunaj cas
     lengthSignal = signal.shape[0]
@@ -177,30 +226,27 @@ def sestavi_podatke (packets: np.ndarray, id:int):
     return signal, Fvz
 
 if __name__ == "__main__":
-    with open("Audio_logs/LOG6", "rb") as f:
+    with open("odpadki\\papir\\karton\\karton_skatla2", "rb") as f:
         data = f.read()
         separate(data)
 
     id = np.array(id)
-    timestamp =  np.array(timestamps)
+    timestamp = np.array(timestamps)
     chunks = np.array(chunks, dtype=object)
-    graph_id = 4
-    packets=[]
+    packets = []
 
-    for id,timestamp,chunk in zip(id,timestamps,chunks):
-        data = np.array(chunk,dtype=np.int16).flatten()
-        if id == 1 or id == 2 or id == 3:   
-            data = data.reshape(-1,3)
-        packets.append(Paket(id,timestamp,data))
+    for id, timestamp, chunk in zip(id, timestamps, chunks):
+        data = np.array(chunk, dtype=np.int16).flatten()
+        packets.append(Paket(id, timestamp, data))
 
-    signal, Fvz= sestavi_podatke(packets,graph_id)
+    signal, Fvz = sestavi_podatke(packets)
 
-    if graph_id == 4:
-        for i in range(len(signal)):
-            if signal[i] < 0:
-                signal[i] = -ALAW_DECODE_TABLE[-signal[i]]
-            else:
-                signal[i] = ALAW_DECODE_TABLE[signal[i]]
+    for i in range(len(signal)):
+        if signal[i] < 0:
+            signal[i] = -ALAW_DECODE_TABLE[-signal[i]]
+        else:
+            signal[i] = ALAW_DECODE_TABLE[signal[i]]
 
-    prikazi_signal(signal, "Microphone", None, None, graph_id)
-    prikazi_signal(signal, "Microphone zoomed", int(Fvz*0.7), int(Fvz*1.3), graph_id)
+    start, end = najdi_dogodek(signal, Fvz)
+    prikazi_signal(signal, "Microphone", None, None, Fvz)
+    prikazi_signal(signal, "Microphone — event only", start, end, Fvz, normalize_16bit=True)
