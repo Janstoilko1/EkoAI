@@ -32,6 +32,9 @@ ALAW_DECODE_TABLE = np.array([
 
 EVENT_SIZE = 6000
 
+RAZREDI = {"steklo" : 0 , "embalaza" : 1, "papir" : 2}
+
+
 id = []
 chunks = []
 timestamps = []
@@ -231,6 +234,12 @@ def sestavi_podatke(packets: np.ndarray, id: int = 4):
     #frekvneca signala
     Fvz = lengthSignal/time
     return signal, Fvz
+
+def obdelaj_vse(surova_mapa: str, obdelana_mapa: str):
+    """Za implementacijo preberi README.md"""
+    pass
+
+
 
 if __name__ == "__main__":
     with open("odpadki\\papir\\karton\\karton_skatla3", "rb") as f:
