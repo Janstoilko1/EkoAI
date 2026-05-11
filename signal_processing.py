@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import string
 import sounddevice as sd
 import scipy.signal as sp_signal
+from pathlib import Path
 @dataclass
 class Paket:
 	id: int      
@@ -223,6 +224,9 @@ def prikazi_signal(signal: np.ndarray, naslov: string, startInd: int, endInd: in
     plt.tight_layout()
     plt.show()
 
+    spectogram_input = 10 * np.log10(Sxx + 1e-10)
+    shrani_spektrogram(spectogram_input)
+
 def sestavi_podatke(packets: np.ndarray, id: int = 4):
     timestamps = [packet.time for packet in packets if packet.id==id]
     signal = np.concatenate([packet.data for packet in packets if packet.id==id], axis=0)
@@ -237,19 +241,96 @@ def sestavi_podatke(packets: np.ndarray, id: int = 4):
 
 def obdelaj_vse(surova_mapa: str, obdelana_mapa: str):
     """Za implementacijo preberi README.md"""
-    pass
+    for razred in RAZREDI:
+        vhodna = Path(surova_mapa)/razred
+        izhodna = Path(obdelana_mapa)/razred
+        izhodna.mkdir(parents=True, exist_ok=True)
 
+        for podmapa in vhodna.iterdir():
+            if not podmapa.is_dir():
+                continue
+            for pot in podmapa.iterdir():
+                if not pot.is_file():
+                    continue
 
+                with open(pot, "rb") as f:
+                    data = f.read()
+
+                global id, chunks, timestamps
+                id, chunks, timestamps = [], [], []
+
+                separate(data)
+
+                id_arr = np.array(id)
+                ts_arr = np.array(timestamps)
+                ch_arr = np.array(chunks, dtype=object)
+                packets = []
+
+                for pid, ptimestamp, pchunk in zip(id_arr, ts_arr, ch_arr):
+                    pdata = np.array(pchunk, dtype=np.int16).flatten()
+                    packets.append(Paket(pid, ptimestamp, pdata))
+
+                signal, Fvz = sestavi_podatke(packets)
+
+                for i in range(len(signal)):
+                    if signal[i] < 0:
+                        signal[i] = -ALAW_DECODE_TABLE[-signal[i]]
+                    else:
+                        signal[i] = ALAW_DECODE_TABLE[signal[i]]
+
+                start, end = najdi_dogodek(signal, Fvz)
+
+                spektogram = signal_v_spektogram(signal, start, end, Fvz, normalize_16bit=True)
+
+                izhofna_pot = izhodna / (pot.name + ".npy")
+                np.save(izhofna_pot, spektogram)
+
+def spectogram_norm(signal: np.ndarray) -> np.ndarray:
+    Sxx_norm = (signal - signal.min()) / (signal.max() - signal.min() + 1e-8)
+    return (Sxx_norm * 255).astype(np.float32)
+    
+
+def shrani_spektrogram(spektogram: np.ndarray):
+    spektogram_norm = spectogram_norm(spektogram)
+    np.save("odpadki_obdelani\\papir\\karton\\karton_skatla3.npy", spektogram_norm)
+
+def signal_v_spektogram(signal: np.ndarray, startInd: int, endInd: int, Fvz: float, normalize_16bit: bool = False):
+    interval = signal[startInd:endInd]
+    time = np.arange(startInd, endInd) / Fvz
+
+    if normalize_16bit:
+        sig_float = interval.astype(np.float64)
+        peak = np.max(sig_float)
+        low = np.min(sig_float)
+        if peak > 0:
+            interval = (sig_float - low)/(peak - low) * 65535 - 32768
+        interval = interval.astype(np.int16)
+
+    spec_sig = np.array(interval, dtype=np.float64)
+        
+    nperseg = min(256, max(16, len(spec_sig) // 8))
+    f_spec, t_spec, Sxx = sp_signal.spectrogram(spec_sig, fs=Fvz, nperseg=nperseg)
+
+    spectogram_input = 10 * np.log10(Sxx + 1e-10)
+
+    spectogram_input = spectogram_norm(spectogram_input)
+
+    return spectogram_input
 
 if __name__ == "__main__":
-    with open("odpadki\\papir\\karton\\karton_skatla3", "rb") as f:
-        data = f.read()
-        separate(data)
+   
+
+
+   obdelaj_vse("odpadki_surovi", "odpadki_obdelani")
+   """with open("odpadki_surovi\\papir\\karton\\karton_skatla3", "rb") as f:
+    data = f.read()
+    separate(data)
 
     id = np.array(id)
     timestamp = np.array(timestamps)
     chunks = np.array(chunks, dtype=object)
     packets = []
+    
 
     for id, timestamp, chunk in zip(id, timestamps, chunks):
         data = np.array(chunk, dtype=np.int16).flatten()
@@ -265,4 +346,8 @@ if __name__ == "__main__":
 
     start, end = najdi_dogodek(signal, Fvz)
     prikazi_signal(signal, "Microphone", None, None, Fvz)
-    prikazi_signal(signal, "Microphone — event only", start, end, Fvz, normalize_16bit=True)
+    prikazi_signal(signal, "Microphone — event only", start, end, Fvz, normalize_16bit=True)"""
+   
+    
+
+    
