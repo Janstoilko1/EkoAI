@@ -184,6 +184,32 @@ def najdi_dogodek(signal: np.ndarray, Fvz: float,
         end = (start + EVENT_SIZE)
     return start, end
 
+def augmentiraj_podatke(signal: np.ndarray, Fvz: float):
+    sig = signal.astype(np.float64)
+
+    noise = np.random.normal(0, 0.01 * np.max(np.abs(sig)), size=sig.shape)
+    echo_kernel = np.exp(-np.arange(0, int(len(sig) * 0.1)) / 100)
+
+    s_sum   = sig + noise
+    s_odmev = np.convolve(sig, echo_kernel, mode='full')[:len(sig)]
+    s_inv   = -sig
+
+    s_sum_odmev = np.convolve(s_sum, echo_kernel, mode='full')[:len(sig)]
+    s_sum_inv   = -s_sum
+    s_odmev_inv = -s_odmev
+    s_sum_odmev_inv = -s_sum_odmev
+
+    return [
+        (s_sum,         "_sum"),
+        (s_odmev,       "_odmev"),
+        (s_inv,         "_inv"),
+        (s_sum_odmev,   "_sum_odmev"),
+        (s_sum_inv,     "_sum_inv"),
+        (s_odmev_inv,   "_odmev_inv"),
+        (s_sum_odmev_inv, "_sum_odmev_inv"),
+    ]
+
+
 
 def prikazi_signal(signal: np.ndarray, naslov: string, startInd: int, endInd: int, Fvz: float, normalize_16bit: bool = False):
     if startInd is None:
@@ -194,38 +220,41 @@ def prikazi_signal(signal: np.ndarray, naslov: string, startInd: int, endInd: in
     interval = signal[startInd:endInd]
     time = np.arange(startInd, endInd) / Fvz
 
-    if normalize_16bit:
-        sig_float = interval.astype(np.float64)
-        peak = np.max(sig_float)
-        low = np.min(sig_float)
-        if peak > 0:
-            interval = (sig_float - low)/(peak - low) * 65535 - 32768
-        interval = interval.astype(np.int16)
+    podatki =augmentiraj_podatke(interval, Fvz)
+    for interval in podatki:
+        if normalize_16bit:
+            sig_float = interval.astype(np.float64)
+            peak = np.max(sig_float)
+            low = np.min(sig_float)
+            if peak > 0:
+                interval = (sig_float - low)/(peak - low) * 65535 - 32768
+            interval = interval.astype(np.int16)
 
-    fig, (ax_sig, ax_spec) = plt.subplots(2, 1, figsize=(12, 8))
+        fig, (ax_sig, ax_spec) = plt.subplots(2, 1, figsize=(12, 8))
 
-    ax_sig.plot(time, interval, label="Value")
-    ax_sig.set_xlabel("time [s]")
-    ax_sig.set_ylabel("Amplitude")
-    ax_sig.set_title(naslov)
-    ax_sig.legend()
+        ax_sig.plot(time, interval, label="Value")
+        ax_sig.set_xlabel("time [s]")
+        ax_sig.set_ylabel("Amplitude")
+        ax_sig.set_title(naslov)
+        ax_sig.legend()
 
-    # spectrogram (STFT)
-    spec_sig = np.array(interval, dtype=np.float64)
-        
-    nperseg = min(256, max(16, len(spec_sig) // 8))
-    f_spec, t_spec, Sxx = sp_signal.spectrogram(spec_sig, fs=Fvz, nperseg=nperseg)
-    im = ax_spec.pcolormesh(t_spec, f_spec, 10 * np.log10(Sxx + 1e-10), shading="gouraud", cmap="inferno")
-    fig.colorbar(im, ax=ax_spec)
-    ax_spec.set_xlabel("Time [s]")
-    ax_spec.set_ylabel("Frequency [Hz]")
-    ax_spec.set_title("Spectrogram (STFT)")
+        # spectrogram (STFT)
+        spec_sig = np.array(interval, dtype=np.float64)
+            
+        nperseg = min(256, max(16, len(spec_sig) // 8))
+        f_spec, t_spec, Sxx = sp_signal.spectrogram(spec_sig, fs=Fvz, nperseg=nperseg)
+        im = ax_spec.pcolormesh(t_spec, f_spec, 10 * np.log10(Sxx + 1e-10), shading="gouraud", cmap="inferno")
+        fig.colorbar(im, ax=ax_spec)
+        ax_spec.set_xlabel("Time [s]")
+        ax_spec.set_ylabel("Frequency [Hz]")
+        ax_spec.set_title("Spectrogram (STFT)")
 
-    plt.tight_layout()
-    plt.show()
+        plt.tight_layout()
+        plt.show()
 
-    spectogram_input = 10 * np.log10(Sxx + 1e-10)
-    shrani_spektrogram(spectogram_input)
+        spectogram_input = 10 * np.log10(Sxx + 1e-10)
+        shrani_spektrogram(spectogram_input)
+
 
 def sestavi_podatke(packets: np.ndarray, id: int = 4):
     timestamps = [packet.time for packet in packets if packet.id==id]
@@ -281,9 +310,20 @@ def obdelaj_vse(surova_mapa: str, obdelana_mapa: str):
                 start, end = najdi_dogodek(signal, Fvz)
 
                 spektogram = signal_v_spektogram(signal, start, end, Fvz, normalize_16bit=True)
+                np.save(izhodna / (pot.name + ".npy"), spektogram)
+                np.save(izhodna / (pot.name + "_freq.npy"), freq_mask(spektogram))
 
-                izhofna_pot = izhodna / (pot.name + ".npy")
-                np.save(izhofna_pot, spektogram)
+                for aug_signal, suffix in augmentiraj_podatke(signal, Fvz):
+                    aug_spec = signal_v_spektogram(aug_signal, start, end, Fvz, normalize_16bit=True)
+                    np.save(izhodna / (pot.name + suffix + ".npy"), aug_spec)
+                    np.save(izhodna / (pot.name + suffix + "_freq.npy"), freq_mask(aug_spec))
+
+def freq_mask(spec: np.ndarray, F: int = 10) -> np.ndarray:
+    spec = spec.copy()
+    f = np.random.randint(1, F + 1)
+    f0 = np.random.randint(0, spec.shape[0] - f)
+    spec[f0:f0 + f, :] = 0
+    return spec
 
 def spectogram_norm(signal: np.ndarray) -> np.ndarray:
     Sxx_norm = (signal - signal.min()) / (signal.max() - signal.min() + 1e-8)
