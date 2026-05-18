@@ -117,7 +117,6 @@ def process(data):
     if crc!=computed_crc:
         print("CRC mismatch", crc, computed_crc)
         return
-    print("crc ok")
 
     chunks_data = payload[6:6+packet_size]
     pos = 0

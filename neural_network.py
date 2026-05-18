@@ -71,13 +71,19 @@ class NeuralNetwork(nn.Module):
         pass
 
     def predict(self, x):
-        self.eval()  # ← izklopi dropout
-        with torch.no_grad():  # ← ne računaj gradientov
+        device = next(self.parameters()).device
+        x = x.to(device)
+        self.eval()
+        with torch.no_grad():
             y_hat = self(x)
             probabilities = torch.softmax(y_hat, dim=1)
             predicted_class = torch.argmax(probabilities, dim=1)
         return predicted_class, probabilities
+
 if __name__ == "__main__":
+    device = torch.device("cpu")#"cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Naprava: {device}")
+
     obdelana_mapa = "odpadki_obdelani"
 
     X=[]
@@ -86,39 +92,30 @@ if __name__ == "__main__":
     for razred in RAZREDI:
         mapa = Path(obdelana_mapa)/razred
 
-    
-                
         for pot in mapa.glob("*.npy"):
-    
             spec = np.load(pot)
             spec = torch.tensor(np.array(spec), dtype=torch.float) / 255.0
             X.append(spec.unsqueeze(0).unsqueeze(0))
             Y.append(RAZREDI[razred])
 
-
-    X = torch.cat(X,dim = 0)
-    Y = torch.tensor(Y, dtype=torch.long)
-
-    
+    X = torch.cat(X, dim=0).to(device)
+    Y = torch.tensor(Y, dtype=torch.long).to(device)
 
     learningRate = 0.001
     epochs = 10000
     errorThreshold = 0.001
-    
-    model = NeuralNetwork()
 
-    optimizer = optim.Adam(model.parameters(), lr = learningRate)
+    model = NeuralNetwork().to(device)
+
+    optimizer = optim.Adam(model.parameters(), lr=learningRate)
 
     losses = []
-
     start = time.time()
-
     loss_fn = nn.CrossEntropyLoss()
+    zadnji_procent = -1
 
     for epoch in range(epochs):
-
         y_hat = model(X)
-
         loss = loss_fn(y_hat, Y)
 
         optimizer.zero_grad()
@@ -126,15 +123,21 @@ if __name__ == "__main__":
         optimizer.step()
 
         losses.append(loss.item())
-            
+
+        procent = int((epoch + 1) / epochs * 100)
+        if procent != zadnji_procent:
+            print(f"\rUčenje: {procent}%  (izguba: {loss.item():.6f})", end="", flush=True)
+            zadnji_procent = procent
+
         if loss.item() < errorThreshold:
+            print(f"\rUčenje: 100%  (izguba: {loss.item():.6f})")
             print("Učenje zaključeno, napaka je dovolj majhna.")
             break
+    else:
+        print()
 
-        
     end = time.time()
 
-    
     plt.plot(range(len(losses)), losses)
     plt.xlabel("Iteracija")
     plt.ylabel("Vrednost izgube")
@@ -142,10 +145,8 @@ if __name__ == "__main__":
     plt.show()
 
     RAZREDI_INV = {v: k for k, v in RAZREDI.items()}
-    # {0: "steklo", 1: "embalaza", 2: "papir"}
 
-    # prediction na enem posnetku
-    spec = np.load("odpadki_obdelani\\embalaza\\konzerva1_freq.npy")
+    spec = np.load("odpadki_obdelani\\embalaza\\LOG001.BIN_freq.npy")
     spec = torch.tensor(spec, dtype=torch.float32) / 255.0
     spec = spec.unsqueeze(0).unsqueeze(0)  # (1, 1, 129, 26)
 
