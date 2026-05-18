@@ -271,57 +271,83 @@ def sestavi_podatke(packets: np.ndarray, id: int = 4):
 def obdelaj_vse(surova_mapa: str, obdelana_mapa: str):
     """Za implementacijo preberi README.md"""
     for razred in RAZREDI:
-        vhodna = Path(surova_mapa)/razred
-        izhodna = Path(obdelana_mapa)/razred
+        vhodna = Path(surova_mapa) / razred
+        izhodna = Path(obdelana_mapa) / razred
         izhodna.mkdir(parents=True, exist_ok=True)
 
-        for podmapa in vhodna.iterdir():
-            if not podmapa.is_dir():
+        print(f"\n=== Obdelujem razred: {razred} ===")
+
+        for pot in sorted(vhodna.glob("*.BIN")):
+            if not pot.is_file():
                 continue
-            for pot in podmapa.iterdir():
-                if not pot.is_file():
-                    continue
 
-                with open(pot, "rb") as f:
-                    data = f.read()
+            print(f"\nObdelujem: {pot} ({pot.stat().st_size} bajtov)")
 
-                global id, chunks, timestamps
-                id, chunks, timestamps = [], [], []
+            with open(pot, "rb") as f:
+                data = f.read()
 
+            # zelo majhne datoteke skoraj zagotovo niso pravi log
+            if len(data) < 20:
+                print(f"SKIP: datoteka je premajhna: {pot}")
+                continue
+
+            # če je notri tekst ERROR, to ni pravi BIN log
+            if b"ERROR" in data[:200]:
+                print(f"SKIP: datoteka vsebuje ERROR tekst: {pot}")
+                print(data[:200].decode(errors="replace"))
+                continue
+
+            global id, chunks, timestamps
+            id, chunks, timestamps = [], [], []
+
+            try:
                 separate(data)
+            except Exception as e:
+                print(f"SKIP: napaka pri parsiranju datoteke {pot.name}")
+                print(f"Napaka: {type(e).__name__}: {e}")
+                continue
 
-                id_arr = np.array(id)
-                ts_arr = np.array(timestamps)
-                ch_arr = np.array(chunks, dtype=object)
-                packets = []
+            if len(chunks) == 0:
+                print(f"SKIP: v datoteki ni uporabnih chunkov: {pot.name}")
+                continue
 
-                for pid, ptimestamp, pchunk in zip(id_arr, ts_arr, ch_arr):
-                    pdata = np.array(pchunk, dtype=np.int16).flatten()
-                    packets.append(Paket(pid, ptimestamp, pdata))
+            id_arr = np.array(id)
+            ts_arr = np.array(timestamps)
+            ch_arr = np.array(chunks, dtype=object)
+            packets = []
 
+            for pid, ptimestamp, pchunk in zip(id_arr, ts_arr, ch_arr):
+                pdata = np.array(pchunk, dtype=np.int16).flatten()
+                packets.append(Paket(pid, ptimestamp, pdata))
+
+            try:
                 signal, Fvz = sestavi_podatke(packets)
+            except Exception as e:
+                print(f"SKIP: ne morem sestaviti signala za {pot.name}")
+                print(f"Napaka: {type(e).__name__}: {e}")
+                continue
 
-                Fvz = Fvz * 0.18
-                Fvz = round(Fvz)
+            Fvz = Fvz * 0.18
+            Fvz = round(Fvz)
 
-                signal = signal[Fvz:]
+            signal = signal[Fvz:]
 
-                for i in range(len(signal)):
-                    if signal[i] < 0:
-                        signal[i] = -ALAW_DECODE_TABLE[-signal[i]]
-                    else:
-                        signal[i] = ALAW_DECODE_TABLE[signal[i]]
+            for i in range(len(signal)):
+                if signal[i] < 0:
+                    signal[i] = -ALAW_DECODE_TABLE[-signal[i]]
+                else:
+                    signal[i] = ALAW_DECODE_TABLE[signal[i]]
 
-                start, end = najdi_dogodek(signal, Fvz)
+            start, end = najdi_dogodek(signal, Fvz)
 
-                spektogram = signal_v_spektogram(signal, start, end, Fvz, normalize_16bit=True)
-                np.save(izhodna / (pot.name + ".npy"), spektogram)
-                np.save(izhodna / (pot.name + "_freq.npy"), freq_mask(spektogram))
+            spektogram = signal_v_spektogram(signal, start, end, Fvz, normalize_16bit=True)
+            np.save(izhodna / (pot.name + ".npy"), spektogram)
+            np.save(izhodna / (pot.name + "_freq.npy"), freq_mask(spektogram))
 
-                for aug_signal, suffix in augmentiraj_podatke(signal, Fvz):
-                    aug_spec = signal_v_spektogram(aug_signal, start, end, Fvz, normalize_16bit=True)
-                    np.save(izhodna / (pot.name + suffix + ".npy"), aug_spec)
-                    np.save(izhodna / (pot.name + suffix + "_freq.npy"), freq_mask(aug_spec))
+            for aug_signal, suffix in augmentiraj_podatke(signal, Fvz):
+                aug_spec = signal_v_spektogram(aug_signal, start, end, Fvz, normalize_16bit=True)
+                np.save(izhodna / (pot.name + suffix + ".npy"), aug_spec)
+                np.save(izhodna / (pot.name + suffix + "_freq.npy"), freq_mask(aug_spec))
 
 def freq_mask(spec: np.ndarray, F: int = 10) -> np.ndarray:
     spec = spec.copy()
@@ -366,7 +392,7 @@ if __name__ == "__main__":
    
 
 
-   obdelaj_vse("odpadki_surovi", "odpadki_obdelani")
+   obdelaj_vse("Audio_logs", "odpadki_obdelani")
    """with open("odpadki_surovi\\papir\\karton\\karton_skatla3", "rb") as f:
     data = f.read()
     separate(data)
