@@ -301,6 +301,11 @@ def obdelaj_vse(surova_mapa: str, obdelana_mapa: str):
 
                 signal, Fvz = sestavi_podatke(packets)
 
+                Fvz = Fvz * 0.18
+                Fvz = round(Fvz)
+
+                signal = signal[Fvz:]
+
                 for i in range(len(signal)):
                     if signal[i] < 0:
                         signal[i] = -ALAW_DECODE_TABLE[-signal[i]]

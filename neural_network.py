@@ -86,17 +86,14 @@ if __name__ == "__main__":
     for razred in RAZREDI:
         mapa = Path(obdelana_mapa)/razred
 
-        for podmapa in mapa.iterdir():
-            if not podmapa.is_dir():
-                continue
-            for pot in podmapa.iterdir():
-                if not pot.is_file():
-                    continue
-
-                spec = np.load(pot)
-                spec = torch.tensor(np.array(spec), dtype=torch.float) / 255.0
-                X.append(spec.unsqueeze(0).unsqueeze(0))
-                Y.append(RAZREDI[razred])
+    
+                
+        for pot in mapa.glob("*.npy"):
+    
+            spec = np.load(pot)
+            spec = torch.tensor(np.array(spec), dtype=torch.float) / 255.0
+            X.append(spec.unsqueeze(0).unsqueeze(0))
+            Y.append(RAZREDI[razred])
 
 
     X = torch.cat(X,dim = 0)
@@ -148,7 +145,7 @@ if __name__ == "__main__":
     # {0: "steklo", 1: "embalaza", 2: "papir"}
 
     # prediction na enem posnetku
-    spec = np.load("odpadki_obdelani\\papir\\karton_skatla7.npy")
+    spec = np.load("odpadki_obdelani\\embalaza\\konzerva1_freq.npy")
     spec = torch.tensor(spec, dtype=torch.float32) / 255.0
     spec = spec.unsqueeze(0).unsqueeze(0)  # (1, 1, 129, 26)
 
