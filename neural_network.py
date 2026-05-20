@@ -21,6 +21,7 @@ from typing import Counter
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 import time
 from matplotlib import pyplot as plt
@@ -81,10 +82,19 @@ class NeuralNetwork(nn.Module):
         return predicted_class, probabilities
 
 if __name__ == "__main__":
-    device = torch.device("cpu")#"cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Naprava: {device}")
 
     obdelana_mapa = "odpadki_obdelani"
+    test_mapa = Path("test_data")
+
+    # zberemo imena vseh testnih datotek, da jih izključimo iz učenja
+    test_datoteke = set()
+    for razred in RAZREDI:
+        podmapa = test_mapa / razred
+        if podmapa.exists():
+            for pot in podmapa.glob("*.npy"):
+                test_datoteke.add(pot.name)
 
     X=[]
     Y=[]
@@ -93,21 +103,26 @@ if __name__ == "__main__":
         mapa = Path(obdelana_mapa)/razred
 
         for pot in mapa.glob("*.npy"):
+            if pot.name in test_datoteke:
+                continue  # preskoči testne podatke
             spec = np.load(pot)
             spec = torch.tensor(np.array(spec), dtype=torch.float) / 255.0
             X.append(spec.unsqueeze(0).unsqueeze(0))
             Y.append(RAZREDI[razred])
 
-    X = torch.cat(X, dim=0).to(device)
-    Y = torch.tensor(Y, dtype=torch.long).to(device)
+    X = torch.cat(X, dim=0)
+    Y = torch.tensor(Y, dtype=torch.long)
 
-    learningRate = 0.001
+    dataset = TensorDataset(X, Y)
+    loader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+    learningRate = 0.00005
     epochs = 10000
     errorThreshold = 0.001
-
     model = NeuralNetwork().to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=learningRate)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=50)
 
     losses = []
     start = time.time()
@@ -115,22 +130,30 @@ if __name__ == "__main__":
     zadnji_procent = -1
 
     for epoch in range(epochs):
-        y_hat = model(X)
-        loss = loss_fn(y_hat, Y)
+        model.train()
+        epoch_loss = 0.0
+        for X_batch, Y_batch in loader:
+            X_batch, Y_batch = X_batch.to(device), Y_batch.to(device)
+            y_hat = model(X_batch)
+            loss = loss_fn(y_hat, Y_batch)
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            epoch_loss += loss.item()
 
-        losses.append(loss.item())
+        avg_loss = epoch_loss / len(loader)
+        scheduler.step(avg_loss)
+        losses.append(avg_loss)
 
         procent = int((epoch + 1) / epochs * 100)
         if procent != zadnji_procent:
-            print(f"\rUčenje: {procent}%  (izguba: {loss.item():.6f})", end="", flush=True)
+            print(f"\rUčenje: {procent}%  (izguba: {avg_loss:.6f})", end="", flush=True)
             zadnji_procent = procent
 
-        if loss.item() < errorThreshold:
-            print(f"\rUčenje: 100%  (izguba: {loss.item():.6f})")
+        if avg_loss < errorThreshold:
+            print(f"\rUčenje: 100%  (izguba: {avg_loss:.6f})")
             print("Učenje zaključeno, napaka je dovolj majhna.")
             break
     else:
@@ -146,11 +169,28 @@ if __name__ == "__main__":
 
     RAZREDI_INV = {v: k for k, v in RAZREDI.items()}
 
-    spec = np.load("odpadki_obdelani\\embalaza\\LOG001.BIN_freq.npy")
-    spec = torch.tensor(spec, dtype=torch.float32) / 255.0
-    spec = spec.unsqueeze(0).unsqueeze(0)  # (1, 1, 129, 26)
+    test_mapa = Path("test_data")
+    pravilno = 0
+    skupaj = 0
 
-    predicted_class, probabilities = model.predict(spec)
+    print(f"\n=== Testiranje ===")
+    for razred, razred_id in RAZREDI.items():
+        podmapa = test_mapa / razred
+        if not podmapa.exists():
+            continue
+        for pot in sorted(podmapa.glob("*.npy")):
+            spec = np.load(pot)
+            spec = torch.tensor(spec, dtype=torch.float32) / 255.0
+            spec = spec.unsqueeze(0).unsqueeze(0).to(device)
 
-    print(f"Napoved: {RAZREDI_INV[predicted_class.item()]}")
-    print(f"Verjetnosti: steklo={probabilities[0,0]:.2f}, embalaza={probabilities[0,1]:.2f}, papir={probabilities[0,2]:.2f}")
+            predicted_class, probabilities = model.predict(spec)
+            napoved = RAZREDI_INV[predicted_class.item()]
+            pravilno += int(napoved == razred)
+            skupaj += 1
+            print(f"{razred}/{pot.name:<45} -> {napoved}  "
+                  f"(steklo={probabilities[0,0]:.2f}, embalaza={probabilities[0,1]:.2f}, papir={probabilities[0,2]:.2f})")
+
+    if skupaj > 0:
+        print(f"\nTočnost: {pravilno}/{skupaj} ({100 * pravilno / skupaj:.1f}%)")
+    else:
+        print("Ni testnih datotek v", test_mapa)

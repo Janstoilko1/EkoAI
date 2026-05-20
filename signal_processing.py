@@ -1,4 +1,6 @@
 import struct
+import random
+import shutil
 from attr import dataclass
 import numpy as np
 import matplotlib.pyplot as plt
@@ -387,11 +389,31 @@ def signal_v_spektogram(signal: np.ndarray, startInd: int, endInd: int, Fvz: flo
 
     return spectogram_input
 
+def pripravi_test_podatke(obdelana_mapa: str, test_mapa: str, delez: float = 0.1):
+    for razred in RAZREDI:
+        vhodna = Path(obdelana_mapa) / razred
+        izhodna = Path(test_mapa) / razred
+        izhodna.mkdir(parents=True, exist_ok=True)
+
+        # izberemo samo originalne posnetke (ne augmentirane)
+        baze = sorted(p for p in vhodna.glob("*.npy") if p.name.endswith(".BIN.npy"))
+        n = max(1, int(len(baze) * delez))
+        izbrane_baze = random.sample(baze, min(n, len(baze)))
+
+        kopirano = 0
+        for baza in izbrane_baze:
+            # kopiramo original + vse augmentirane verzije tega posnetka
+            for pot in vhodna.glob(f"{baza.stem}*.npy"):
+                shutil.copy2(pot, izhodna / pot.name)
+                kopirano += 1
+
+        print(f"{razred}: {len(izbrane_baze)}/{len(baze)} posnetkov ({kopirano} datotek) -> test_data/{razred}")
+
 if __name__ == "__main__":
-   
 
 
    obdelaj_vse("Audio_logs", "odpadki_obdelani")
+   pripravi_test_podatke("odpadki_obdelani", "test_data")
    """with open("odpadki_surovi\\papir\\karton\\karton_skatla3", "rb") as f:
     data = f.read()
     separate(data)

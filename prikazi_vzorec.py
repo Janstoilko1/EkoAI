@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-MAPA = Path("odpadki_obdelani\\steklo")
+MAPA = Path("odpadki_obdelani")
 
 SUFFIXES = [
     ("",                 "original"),
