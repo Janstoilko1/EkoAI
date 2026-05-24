@@ -270,29 +270,27 @@ def sestavi_podatke(packets: np.ndarray, id: int = 4):
     return signal, Fvz
 
 def obdelaj_vse(surova_mapa: str, obdelana_mapa: str):
-    """Za implementacijo preberi README.md"""
     for razred in RAZREDI:
-        vhodna = Path(surova_mapa) / razred
-        izhodna = Path(obdelana_mapa) / razred
-        izhodna.mkdir(parents=True, exist_ok=True)
-
+        vhodna_razred = Path(surova_mapa) / razred
         print(f"\n=== Obdelujem razred: {razred} ===")
 
-        for pot in sorted(vhodna.glob("*.BIN")):
+        for pot in sorted(vhodna_razred.glob("**/*.BIN")):
             if not pot.is_file():
                 continue
 
-            print(f"\nObdelujem: {pot} ({pot.stat().st_size} bajtov)")
+            podrazred = pot.parent.name
+            izhodna = Path(obdelana_mapa) / razred / podrazred
+            izhodna.mkdir(parents=True, exist_ok=True)
+
+            print(f"\nObdelujem: {razred}/{podrazred}/{pot.name} ({pot.stat().st_size} bajtov)")
 
             with open(pot, "rb") as f:
                 data = f.read()
 
-            # zelo majhne datoteke skoraj zagotovo niso pravi log
             if len(data) < 20:
                 print(f"SKIP: datoteka je premajhna: {pot}")
                 continue
 
-            # če je notri tekst ERROR, to ni pravi BIN log
             if b"ERROR" in data[:200]:
                 print(f"SKIP: datoteka vsebuje ERROR tekst: {pot}")
                 print(data[:200].decode(errors="replace"))
@@ -391,23 +389,25 @@ def signal_v_spektogram(signal: np.ndarray, startInd: int, endInd: int, Fvz: flo
 
 def pripravi_test_podatke(obdelana_mapa: str, test_mapa: str, delez: float = 0.1):
     for razred in RAZREDI:
-        vhodna = Path(obdelana_mapa) / razred
-        izhodna = Path(test_mapa) / razred
-        izhodna.mkdir(parents=True, exist_ok=True)
+        vhodna_razred = Path(obdelana_mapa) / razred
+        for podrazred_pot in sorted(vhodna_razred.iterdir()):
+            if not podrazred_pot.is_dir():
+                continue
+            podrazred = podrazred_pot.name
+            izhodna = Path(test_mapa) / razred / podrazred
+            izhodna.mkdir(parents=True, exist_ok=True)
 
-        # izberemo samo originalne posnetke (ne augmentirane)
-        baze = sorted(p for p in vhodna.glob("*.npy") if p.name.endswith(".BIN.npy"))
-        n = max(1, int(len(baze) * delez))
-        izbrane_baze = random.sample(baze, min(n, len(baze)))
+            baze = sorted(p for p in podrazred_pot.glob("*.npy") if p.name.endswith(".BIN.npy"))
+            n = max(1, int(len(baze) * delez))
+            izbrane_baze = random.sample(baze, min(n, len(baze)))
 
-        kopirano = 0
-        for baza in izbrane_baze:
-            # kopiramo original + vse augmentirane verzije tega posnetka
-            for pot in vhodna.glob(f"{baza.stem}*.npy"):
-                shutil.copy2(pot, izhodna / pot.name)
-                kopirano += 1
+            kopirano = 0
+            for baza in izbrane_baze:
+                for pot in podrazred_pot.glob(f"{baza.stem}*.npy"):
+                    shutil.copy2(pot, izhodna / pot.name)
+                    kopirano += 1
 
-        print(f"{razred}: {len(izbrane_baze)}/{len(baze)} posnetkov ({kopirano} datotek) -> test_data/{razred}")
+            print(f"{razred}/{podrazred}: {len(izbrane_baze)}/{len(baze)} posnetkov ({kopirano} datotek) -> test_data/{razred}/{podrazred}")
 
 if __name__ == "__main__":
 

@@ -1,7 +1,7 @@
 """Implementacija Konvolucijske nevronske mreže.
-    
+
    VHODNA PLAST -> 129x26 = 3354 nevronov
-   
+
     Input (1, 129, 26)
      ↓
     Conv2d(1→16)   + ReLU + MaxPool    ← skriti sloj 1
@@ -14,7 +14,7 @@
      ↓
     Linear(1024→128) + ReLU + Dropout  ← skriti sloj 4
      ↓
-    Linear(128→3)                      ← izhodni sloj (3 razredi)"""
+    Linear(128→11)                     ← izhodni sloj (11 podrazredov)"""
 
 from typing import Counter
 
@@ -28,7 +28,35 @@ from matplotlib import pyplot as plt
 import math
 from pathlib import Path
 
-RAZREDI = {"steklo" : 0 , "embalaza" : 1, "papir" : 2}
+PODRAZREDI = {
+    "konzerva":            0,
+    "plastenka":           1,
+    "plocevinka":          2,
+    "puding":              3,
+    "tetrapak":            4,
+    "karton":              5,
+    "papirni_kozarcek":    6,
+    "zmeckan_papir":       7,
+    "Steklen_kozarcek_v2": 8,
+    "stekleni_kozarcek":   9,
+    "zacimba_steklenica":  10,
+}
+
+PODRAZRED_V_RAZRED = {
+    "konzerva":            "embalaza",
+    "plastenka":           "embalaza",
+    "plocevinka":          "embalaza",
+    "puding":              "embalaza",
+    "tetrapak":            "embalaza",
+    "karton":              "papir",
+    "papirni_kozarcek":    "papir",
+    "zmeckan_papir":       "papir",
+    "Steklen_kozarcek_v2": "steklo",
+    "stekleni_kozarcek":   "steklo",
+    "zacimba_steklenica":  "steklo",
+}
+
+RAZREDI = {"steklo": 0, "embalaza": 1, "papir": 2}
 
 class NeuralNetwork(nn.Module):
     def __init__(self):
@@ -39,11 +67,13 @@ class NeuralNetwork(nn.Module):
         self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
 
         self.linear1 = nn.Linear(64*4*4, 128)
-        self.linear2 = nn.Linear(128, 3)
+
+        self.linear2 = nn.Linear(128, 64)
+        self.linear3 = nn.Linear(64, len(PODRAZREDI))
 
         self.relu = nn.ReLU()
         self.flatten = nn.Flatten()
-        self.dropout = nn.Dropout(0.4)
+        self.dropout = nn.Dropout(0.3)
 
         #pooling
         self.maxPool = nn.MaxPool2d(2,2)
@@ -90,39 +120,38 @@ if __name__ == "__main__":
 
     # zberemo imena vseh testnih datotek, da jih izključimo iz učenja
     test_datoteke = set()
-    for razred in RAZREDI:
-        podmapa = test_mapa / razred
-        if podmapa.exists():
-            for pot in podmapa.glob("*.npy"):
-                test_datoteke.add(pot.name)
+    for pot in test_mapa.glob("**/*.npy"):
+        test_datoteke.add(pot.name)
 
-    X=[]
-    Y=[]
+    X = []
+    Y = []
 
-    for razred in RAZREDI:
-        mapa = Path(obdelana_mapa)/razred
-
+    for podrazred, podrazred_id in PODRAZREDI.items():
+        razred = PODRAZRED_V_RAZRED[podrazred]
+        mapa = Path(obdelana_mapa) / razred / podrazred
+        if not mapa.exists():
+            continue
         for pot in mapa.glob("*.npy"):
             if pot.name in test_datoteke:
-                continue  # preskoči testne podatke
+                continue
             spec = np.load(pot)
             spec = torch.tensor(np.array(spec), dtype=torch.float) / 255.0
             X.append(spec.unsqueeze(0).unsqueeze(0))
-            Y.append(RAZREDI[razred])
+            Y.append(podrazred_id)
 
     X = torch.cat(X, dim=0)
     Y = torch.tensor(Y, dtype=torch.long)
 
     dataset = TensorDataset(X, Y)
-    loader = DataLoader(dataset, batch_size=32, shuffle=True)
+    loader = DataLoader(dataset, batch_size=64, shuffle=True)
 
-    learningRate = 0.00005
+    learningRate = 0.0001
     epochs = 10000
-    errorThreshold = 0.001
+    errorThreshold = 0.005
     model = NeuralNetwork().to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=learningRate)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=50)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=100)
 
     losses = []
     start = time.time()
@@ -161,36 +190,56 @@ if __name__ == "__main__":
 
     end = time.time()
 
+    torch.save(model.state_dict(), "model5.pth")
+    print("Model shranjen v model5.pth")
+
     plt.plot(range(len(losses)), losses)
     plt.xlabel("Iteracija")
     plt.ylabel("Vrednost izgube")
     plt.title(f"Potek učenja - čas: {end - start:.2f} s")
     plt.show()
 
-    RAZREDI_INV = {v: k for k, v in RAZREDI.items()}
+    PODRAZREDI_INV = {v: k for k, v in PODRAZREDI.items()}
 
     test_mapa = Path("test_data")
-    pravilno = 0
+    pravilno_razred = 0
+    pravilno_podrazred = 0
     skupaj = 0
 
+    razred_pravilno = {r: 0 for r in RAZREDI}
+    razred_skupaj   = {r: 0 for r in RAZREDI}
+
     print(f"\n=== Testiranje ===")
-    for razred, razred_id in RAZREDI.items():
-        podmapa = test_mapa / razred
+    for podrazred in sorted(PODRAZREDI):
+        razred = PODRAZRED_V_RAZRED[podrazred]
+        podmapa = test_mapa / razred / podrazred
         if not podmapa.exists():
             continue
+
         for pot in sorted(podmapa.glob("*.npy")):
             spec = np.load(pot)
             spec = torch.tensor(spec, dtype=torch.float32) / 255.0
             spec = spec.unsqueeze(0).unsqueeze(0).to(device)
 
-            predicted_class, probabilities = model.predict(spec)
-            napoved = RAZREDI_INV[predicted_class.item()]
-            pravilno += int(napoved == razred)
+            predicted_class, _ = model.predict(spec)
+            napovedan_podrazred = PODRAZREDI_INV[predicted_class.item()]
+            napovedan_razred    = PODRAZRED_V_RAZRED[napovedan_podrazred]
+
+            pravilno_podrazred += int(napovedan_podrazred == podrazred)
+            pravilno_razred    += int(napovedan_razred == razred)
+            razred_pravilno[razred] += int(napovedan_razred == razred)
+            razred_skupaj[razred]   += 1
             skupaj += 1
-            print(f"{razred}/{pot.name:<45} -> {napoved}  "
-                  f"(steklo={probabilities[0,0]:.2f}, embalaza={probabilities[0,1]:.2f}, papir={probabilities[0,2]:.2f})")
+
+            print(f"{razred}/{podrazred}/{pot.name:<40} -> {napovedan_podrazred} ({napovedan_razred})"
+                  f"  {'OK' if napovedan_razred == razred else 'NAPAKA'}")
 
     if skupaj > 0:
-        print(f"\nTočnost: {pravilno}/{skupaj} ({100 * pravilno / skupaj:.1f}%)")
+        print(f"\nTočnost (razred):    {pravilno_razred}/{skupaj} ({100 * pravilno_razred / skupaj:.1f}%)")
+        print(f"Točnost (podrazred): {pravilno_podrazred}/{skupaj} ({100 * pravilno_podrazred / skupaj:.1f}%)")
+        for razred in sorted(RAZREDI):
+            st = razred_skupaj[razred]
+            if st > 0:
+                print(f"  {razred}: {razred_pravilno[razred]}/{st} ({100 * razred_pravilno[razred] / st:.1f}%)")
     else:
         print("Ni testnih datotek v", test_mapa)
