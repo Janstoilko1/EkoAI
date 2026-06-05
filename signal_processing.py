@@ -8,6 +8,9 @@ import string
 import sounddevice as sd
 import scipy.signal as sp_signal
 from pathlib import Path
+from scipy.signal import butter, sosfilt
+
+
 @dataclass
 class Paket:
 	id: int      
@@ -274,7 +277,7 @@ def obdelaj_vse(surova_mapa: str, obdelana_mapa: str):
         vhodna_razred = Path(surova_mapa) / razred
         print(f"\n=== Obdelujem razred: {razred} ===")
 
-        for pot in sorted(vhodna_razred.glob("**/*.BIN")):
+        for pot in sorted(vhodna_razred.glob("**/*")):
             if not pot.is_file():
                 continue
 
@@ -326,10 +329,10 @@ def obdelaj_vse(surova_mapa: str, obdelana_mapa: str):
                 print(f"Napaka: {type(e).__name__}: {e}")
                 continue
 
-            Fvz = Fvz * 0.18
-            Fvz = round(Fvz)
+            remove = Fvz * 0.18
+            remove = round(remove)
 
-            signal = signal[Fvz:]
+            signal = signal[remove:]
 
             for i in range(len(signal)):
                 if signal[i] < 0:
@@ -340,20 +343,28 @@ def obdelaj_vse(surova_mapa: str, obdelana_mapa: str):
             start, end = najdi_dogodek(signal, Fvz)
 
             spektogram = signal_v_spektogram(signal, start, end, Fvz, normalize_16bit=True)
-            np.save(izhodna / (pot.name + ".npy"), spektogram)
-            np.save(izhodna / (pot.name + "_freq.npy"), freq_mask(spektogram))
+            if pot.name.endswith(".BIN"):
+                np.save(izhodna / (pot.name + ".npy"), spektogram)
+                np.save(izhodna / (pot.name + "_freq.npy"), signal_v_spektogram(freq_mask(signal, Fvz), start, end, Fvz, normalize_16bit=True))
 
-            for aug_signal, suffix in augmentiraj_podatke(signal, Fvz):
-                aug_spec = signal_v_spektogram(aug_signal, start, end, Fvz, normalize_16bit=True)
-                np.save(izhodna / (pot.name + suffix + ".npy"), aug_spec)
-                np.save(izhodna / (pot.name + suffix + "_freq.npy"), freq_mask(aug_spec))
+                for aug_signal, suffix in augmentiraj_podatke(signal, Fvz):
+                    aug_spec = signal_v_spektogram(aug_signal, start, end, Fvz, normalize_16bit=True)
+                    np.save(izhodna / (pot.name + suffix + ".npy"), aug_spec)
+                    np.save(izhodna / (pot.name + suffix + "_freq.npy"), signal_v_spektogram(freq_mask(signal, Fvz), start, end, Fvz, normalize_16bit=True))
+            else:
+                np.save(izhodna / (pot.name + ".BIN.npy"), spektogram)
+                np.save(izhodna / (pot.name + ".BIN_freq.npy"), signal_v_spektogram(freq_mask(signal, Fvz), start, end, Fvz, normalize_16bit=True))
 
-def freq_mask(spec: np.ndarray, F: int = 10) -> np.ndarray:
-    spec = spec.copy()
-    f = np.random.randint(1, F + 1)
-    f0 = np.random.randint(0, spec.shape[0] - f)
-    spec[f0:f0 + f, :] = 0
-    return spec
+                for aug_signal, suffix in augmentiraj_podatke(signal, Fvz):
+                    aug_spec = signal_v_spektogram(aug_signal, start, end, Fvz, normalize_16bit=True)
+                    np.save(izhodna / (pot.name + ".BIN" + suffix + ".npy"), aug_spec)
+                    np.save(izhodna / (pot.name + ".BIN" + suffix + "_freq.npy"), signal_v_spektogram(freq_mask(signal, Fvz), start, end, Fvz, normalize_16bit=True))
+
+def freq_mask(spec: np.ndarray, Fvz, F: int = 10) -> np.ndarray:
+    f0 = np.random.randint(200, Fvz//2 - 200)
+    sos = butter(10, [f0-150, f0+150], btype='bandstop', output='sos', fs=Fvz)
+    return sosfilt(sos, spec)
+    
 
 def spectogram_norm(signal: np.ndarray) -> np.ndarray:
     Sxx_norm = (signal - signal.min()) / (signal.max() - signal.min() + 1e-8)

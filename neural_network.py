@@ -147,7 +147,7 @@ if __name__ == "__main__":
 
     learningRate = 0.0001
     epochs = 10000
-    errorThreshold = 0.005
+    errorThreshold = 0.01
     model = NeuralNetwork().to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=learningRate)
@@ -190,8 +190,8 @@ if __name__ == "__main__":
 
     end = time.time()
 
-    torch.save(model.state_dict(), "model5.pth")
-    print("Model shranjen v model5.pth")
+    torch.save(model.state_dict(), "model9.pth")
+    print("Model shranjen v model9.pth")
 
     plt.plot(range(len(losses)), losses)
     plt.xlabel("Iteracija")
@@ -216,7 +216,7 @@ if __name__ == "__main__":
         if not podmapa.exists():
             continue
 
-        for pot in sorted(podmapa.glob("*.npy")):
+        for pot in sorted(podmapa.glob("*.BIN.npy")):
             spec = np.load(pot)
             spec = torch.tensor(spec, dtype=torch.float32) / 255.0
             spec = spec.unsqueeze(0).unsqueeze(0).to(device)
