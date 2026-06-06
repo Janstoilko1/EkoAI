@@ -148,4 +148,5 @@ class WastePredictor:
             "start": start,
             "end": end,
             "spectrogram": spec,
+            "signal": signal,
         }

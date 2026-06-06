@@ -1,12 +1,31 @@
 import serial
 import socket
 import threading
+import queue
 import serial.tools.list_ports
 from pathlib import Path
 import time
 import os
+import wave
+import tempfile
 import logging
+
+import numpy as np
+
+try:
+    import winsound  # Predvajanje zvoka (samo Windows)
+except ImportError:
+    winsound = None
+
 from prediction_utils import WastePredictor
+
+import tkinter as tk
+from tkinter import ttk
+
+import matplotlib
+matplotlib.use("TkAgg")
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 # =========================
 # NASTAVITVE
@@ -46,6 +65,9 @@ listen_thread = None
 listen_stop_event = threading.Event()
 
 is_predicted = False
+
+# Vrsta za posredovanje rezultatov iz delovnih niti v GUI (glavna nit).
+gui_queue = queue.Queue()
 
 # =========================
 # LOGGING
@@ -720,12 +742,268 @@ def make_prediction(file_data):
 
         logging.info(message)
 
+        # Posodobi GUI, če teče (varno prek vrste).
+        gui_queue.put(("result", result))
+        gui_queue.put(("status", f"Zadnja napoved: {message}"))
+
         return message + "\n"
 
     except Exception as e:
         logging.exception("Prediction failed")
+        gui_queue.put(("status", f"Napaka pri napovedi: {type(e).__name__}: {e}"))
         return f"FAIL: Prediction failed: {type(e).__name__}: {e}\n"
     
+
+# =========================
+# GUI
+# =========================
+
+class PredictionGUI:
+    """
+    Enak prikaz kot v gui.py (razred, podrazred, prepricanost, spektrogram),
+    le da datoteke ni mogoče izbrati - signal pride iz STM32 prek servisa.
+    """
+
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.root.title("EkoAI - klasifikacija odpadkov (STM32 servis)")
+        self.root.geometry("960x840")
+
+        # Zgodovina prejetih vzorcev (vsak element je rezultat napovedi).
+        self.samples = []
+        self.current_index = -1
+
+        # Pot do trenutne začasne WAV datoteke za predvajanje.
+        self._wav_path = None
+
+        self.status_var = tk.StringVar(value="Servis se zaganja...")
+        self.counter_var = tk.StringVar(value="Vzorec: 0 / 0")
+        self.razred_var = tk.StringVar(value="Razred: -")
+        self.podrazred_var = tk.StringVar(value="Podrazred: -")
+        self.prepricanost_var = tk.StringVar(value="Prepricanost: -")
+        self.naprava_var = tk.StringVar(
+            value=f"Naprava: {predictor.device}  |  Model: model9.pth"
+        )
+
+        self._zgradi_layout()
+        self._osvezi_gumbe()
+
+        # Ob zaprtju okna ustavi servis in predvajanje.
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # Periodično preverjanje vrste z rezultati iz delovnih niti.
+        self.root.after(100, self._poll_queue)
+
+    def _zgradi_layout(self):
+        zgornji = ttk.Frame(self.root, padding=10)
+        zgornji.pack(fill="x")
+        ttk.Label(zgornji, textvariable=self.status_var,
+                  font=("Segoe UI", 11), wraplength=900).pack(side="left")
+
+        # Kontrolna vrstica z gumbi.
+        kontrole = ttk.Frame(self.root, padding=(10, 0, 10, 0))
+        kontrole.pack(fill="x")
+
+        self.next_btn = ttk.Button(kontrole, text="Naslednji vzorec",
+                                   command=self.naslednji_vzorec)
+        self.next_btn.pack(side="left")
+
+        self.play_btn = ttk.Button(kontrole, text="Predvajaj",
+                                   command=self.predvajaj)
+        self.play_btn.pack(side="left", padx=(10, 0))
+
+        self.stop_btn = ttk.Button(kontrole, text="Ustavi",
+                                   command=self.ustavi)
+        self.stop_btn.pack(side="left", padx=(5, 0))
+
+        ttk.Label(kontrole, textvariable=self.counter_var,
+                  font=("Segoe UI", 11)).pack(side="left", padx=15)
+
+        rezultat_okvir = ttk.LabelFrame(self.root, text="Rezultat", padding=10)
+        rezultat_okvir.pack(fill="x", padx=10, pady=5)
+
+        ttk.Label(rezultat_okvir, textvariable=self.razred_var,
+                  font=("Segoe UI", 16, "bold")).pack(anchor="w")
+        ttk.Label(rezultat_okvir, textvariable=self.podrazred_var,
+                  font=("Segoe UI", 13)).pack(anchor="w")
+        ttk.Label(rezultat_okvir, textvariable=self.prepricanost_var,
+                  font=("Segoe UI", 13)).pack(anchor="w")
+
+        self.fig = plt.Figure(figsize=(9, 4.5))
+        self.ax = self.fig.add_subplot(111)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
+        self.canvas.get_tk_widget().pack(fill="both", expand=True,
+                                         padx=10, pady=10)
+        self.ax.set_title("Spektrogram (cakam na snemanje)")
+        self.ax.set_xlabel("Casovni okvir")
+        self.ax.set_ylabel("Frekvencni bin")
+        self.canvas.draw()
+
+        spodnji = ttk.Frame(self.root, padding=(10, 0, 10, 10))
+        spodnji.pack(fill="x")
+        ttk.Label(spodnji, textvariable=self.naprava_var,
+                  foreground="#666").pack(anchor="w")
+
+    def _poll_queue(self):
+        nov_vzorec = False
+
+        try:
+            while True:
+                kind, payload = gui_queue.get_nowait()
+
+                if kind == "status":
+                    self.status_var.set(payload)
+                elif kind == "result":
+                    # Nov vzorec samo shranimo v zgodovino - NE preskočimo
+                    # samodejno naprej.
+                    self.samples.append(payload)
+                    nov_vzorec = True
+
+        except queue.Empty:
+            pass
+
+        if nov_vzorec:
+            # Prvi vzorec prikažemo samodejno, da okno ni prazno.
+            if self.current_index == -1:
+                self.current_index = 0
+                self._prikazi_trenutni()
+
+            self._osvezi_gumbe()
+
+        self.root.after(100, self._poll_queue)
+
+    # --- Navigacija ---
+
+    def naslednji_vzorec(self):
+        # Naprej se premaknemo le, če je na voljo novejši (nov) vzorec.
+        if self.current_index < len(self.samples) - 1:
+            self.current_index += 1
+            self._prikazi_trenutni()
+            self._osvezi_gumbe()
+        else:
+            self.status_var.set(
+                "Ni novega vzorca - cakam na naslednje snemanje s STM32..."
+            )
+
+    def _prikazi_trenutni(self):
+        if 0 <= self.current_index < len(self.samples):
+            self._prikazi_rezultat(self.samples[self.current_index])
+
+    def _osvezi_gumbe(self):
+        skupaj = len(self.samples)
+        prikazan = self.current_index + 1 if self.current_index >= 0 else 0
+        cakajoci = skupaj - prikazan
+
+        if cakajoci > 0:
+            self.counter_var.set(f"Vzorec: {prikazan} / {skupaj}   (novih: {cakajoci})")
+        else:
+            self.counter_var.set(f"Vzorec: {prikazan} / {skupaj}")
+
+        # "Naslednji vzorec" je aktiven le, če obstaja novejši vzorec.
+        if self.current_index < skupaj - 1:
+            self.next_btn.config(state="normal")
+        else:
+            self.next_btn.config(state="disabled")
+
+        ima_vzorec = 0 <= self.current_index < skupaj
+        play_stanje = "normal" if (ima_vzorec and winsound is not None) else "disabled"
+        self.play_btn.config(state=play_stanje)
+        self.stop_btn.config(state="normal" if winsound is not None else "disabled")
+
+    # --- Predvajanje zvoka ---
+
+    def predvajaj(self):
+        if winsound is None:
+            self.status_var.set("Predvajanje ni na voljo (winsound manjka).")
+            return
+
+        if not (0 <= self.current_index < len(self.samples)):
+            return
+
+        result = self.samples[self.current_index]
+        signal = result.get("signal")
+        Fvz = result.get("Fvz")
+
+        if signal is None or Fvz is None:
+            self.status_var.set("Vzorec nima zvocnih podatkov.")
+            return
+
+        try:
+            # Ustavi morebitno prejšnje predvajanje in počisti staro datoteko.
+            winsound.PlaySound(None, winsound.SND_PURGE)
+            self._pocisti_wav()
+
+            self._wav_path = self._zapisi_wav(signal, Fvz)
+            winsound.PlaySound(
+                self._wav_path,
+                winsound.SND_FILENAME | winsound.SND_ASYNC
+            )
+            self.status_var.set(f"Predvajam vzorec {self.current_index + 1} ...")
+
+        except Exception as e:
+            self.status_var.set(f"Napaka pri predvajanju: {type(e).__name__}: {e}")
+
+    def ustavi(self):
+        if winsound is not None:
+            winsound.PlaySound(None, winsound.SND_PURGE)
+        self.status_var.set("Predvajanje ustavljeno.")
+
+    def _zapisi_wav(self, signal, Fvz) -> str:
+        data = np.asarray(signal, dtype=np.int16)
+
+        fd, path = tempfile.mkstemp(suffix=".wav", prefix="ekoai_")
+        os.close(fd)
+
+        with wave.open(path, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 16-bit
+            wf.setframerate(int(round(Fvz)))
+            wf.writeframes(data.tobytes())
+
+        return path
+
+    def _pocisti_wav(self):
+        if self._wav_path:
+            try:
+                os.remove(self._wav_path)
+            except OSError:
+                pass
+            self._wav_path = None
+
+    def _on_close(self):
+        if winsound is not None:
+            try:
+                winsound.PlaySound(None, winsound.SND_PURGE)
+            except Exception:
+                pass
+
+        self._pocisti_wav()
+        listen_stop_event.set()
+        self.root.destroy()
+
+    def _prikazi_rezultat(self, result: dict):
+        razred = result["razred"]
+        podrazred = result["podrazred"]
+        conf = result["confidence"]
+
+        self.razred_var.set(f"Razred: {razred}")
+        self.podrazred_var.set(f"Podrazred: {podrazred}")
+        self.prepricanost_var.set(f"Prepricanost: {conf * 100:.2f}%")
+
+        naslov = f"vzorec {self.current_index + 1}" if self.current_index >= 0 else ""
+        self._prikazi_spektrogram(result["spectrogram"], naslov)
+
+    def _prikazi_spektrogram(self, spec, naslov: str = ""):
+        self.fig.clear()
+        self.ax = self.fig.add_subplot(111)
+        im = self.ax.imshow(spec, aspect="auto", origin="lower", cmap="inferno")
+        self.ax.set_title(f"Spektrogram - {naslov}" if naslov else "Spektrogram")
+        self.ax.set_xlabel("Casovni okvir")
+        self.ax.set_ylabel("Frekvencni bin")
+        self.fig.colorbar(im, ax=self.ax)
+        self.fig.tight_layout()
+        self.canvas.draw()
+
 
 # =========================
 # TCP OBDELAVA UKAZOV
@@ -853,7 +1131,11 @@ def handle_client(conn, addr):
 # MAIN SERVER
 # =========================
 
-def main():
+def run_server():
+    """
+    TCP strežnik. Teče v ozadju, da GUI lahko zaseda glavno nit.
+    """
+
     logging.info(f"Service starting on {HOST}:{SERVICE_PORT}")
 
     try:
@@ -863,6 +1145,10 @@ def main():
             server.listen()
 
             logging.info(f"Service listening on {HOST}:{SERVICE_PORT}")
+            gui_queue.put((
+                "status",
+                f"Servis posluša na {HOST}:{SERVICE_PORT}. Cakam na snemanje s STM32..."
+            ))
 
             while True:
                 try:
@@ -884,12 +1170,28 @@ def main():
                     logging.exception(f"Unexpected server error: {e}")
                     time.sleep(1)
 
-    except KeyboardInterrupt:
-        logging.info("KeyboardInterrupt received. Stopping service...")
+    except Exception as e:
+        logging.exception(f"Server stopped with error: {e}")
 
     finally:
         listen_stop_event.set()
         logging.info("Service stopped")
+
+
+def main():
+    # TCP strežnik teče v ozadju.
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+
+    # GUI teče na glavni niti.
+    root = tk.Tk()
+    PredictionGUI(root)
+
+    try:
+        root.mainloop()
+    finally:
+        listen_stop_event.set()
+        logging.info("GUI closed, service stopping")
 
 
 if __name__ == "__main__":
