@@ -56,6 +56,41 @@ def parse_bin_file(filepath: str) -> tuple[np.ndarray, float]:
     decoded[signal < 0] = -decoded[signal < 0]
     return decoded, float(Fvz)
 
+def parse_live_singal(data: bytes) -> tuple[np.ndarray, float]:
+    if len(data) < 20:
+        raise ValueError("Datoteka je premajhna.")
+    if b"ERROR" in data[:200]:
+        raise ValueError("Datoteka vsebuje ERROR tekst.")
+
+    sp.id = []
+    sp.chunks = []
+    sp.timestamps = []
+    sp.separate(data)
+
+    if len(sp.chunks) == 0:
+        raise ValueError("V datoteki ni uporabnih chunkov.")
+
+    id_arr = np.array(sp.id)
+    ts_arr = np.array(sp.timestamps)
+    ch_arr = np.array(sp.chunks, dtype=object)
+
+    packets = []
+    for pid, pts, pchunk in zip(id_arr, ts_arr, ch_arr):
+        pdata = np.array(pchunk, dtype=np.int16).flatten()
+        packets.append(sp.Paket(pid, pts, pdata))
+
+    signal, Fvz = sp.sestavi_podatke(packets)
+
+    remove = round(Fvz * 0.18)
+    signal = signal[remove:]
+
+    abs_idx = np.clip(np.abs(signal).astype(np.int32),
+                      0, len(sp.ALAW_DECODE_TABLE) - 1)
+    decoded = sp.ALAW_DECODE_TABLE[abs_idx].astype(np.int16)
+    decoded[signal < 0] = -decoded[signal < 0]
+    return decoded, float(Fvz)
+
+
 
 def parse_wav_file(filepath: str) -> tuple[np.ndarray, float]:
     Fvz, signal = wavfile.read(filepath)
@@ -168,13 +203,14 @@ class Aplikacija:
         self.file_path_var.set(path)
         self.obdelaj(path)
 
-    def obdelaj(self, path: str):
+    def obdelaj(self, path: str, data=None):
         try:
-            sufiks = Path(path).suffix.lower()
+            """sufiks = Path(path).suffix.lower()
             if sufiks == ".wav":
                 signal, Fvz = parse_wav_file(path)
             else:
-                signal, Fvz = parse_bin_file(path)
+                signal, Fvz = parse_bin_file(path)"""
+            signal, Fvz = parse_live_singal(data)
 
             spec, _, _ = izracunaj_spektrogram(signal, Fvz)
             cls, conf = klasificiraj(spec, self.model, self.device)
