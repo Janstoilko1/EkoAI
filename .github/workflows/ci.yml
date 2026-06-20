@@ -21,13 +21,6 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      # Install the CPU build of torch first so the CUDA wheels (multi-GB)
-      # are never pulled. Versions must match requirements.txt.
-      - name: Install CPU PyTorch
-        run: |
-          pip install torch==2.11.0 torchvision==0.26.0 \
-            --index-url https://download.pytorch.org/whl/cpu
-
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
 

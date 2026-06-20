@@ -5,7 +5,6 @@ from attr import dataclass
 import numpy as np
 import matplotlib.pyplot as plt
 import string
-import sounddevice as sd
 import scipy.signal as sp_signal
 from pathlib import Path
 from scipy.signal import butter, sosfilt
