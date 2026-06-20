@@ -1,8 +1,20 @@
+# --- Core / audio pipeline (signal_processing.py, neural_network.py,
+#     prediction_utils.py, service.py, gui.py, bin_to_wav.py) ---
 numpy==2.4.2
-scipy==1.17.0
-torch==2.11.0
+scipy==1.17.1
 matplotlib==3.10.8
+attrs==26.1.0          # provides `attr` (used in signal_processing.py)
 sounddevice==0.5.5
-pyserial>=3.5
-streamlit==1.57.0
-attrs==25.4.0
+pyserial>=3.5          # provides `serial` (STM32 serial in service.py)
+streamlit==1.57.0      # bin_to_wav.py viewer
+
+# --- Deep learning ---
+# For a CUDA build install from PyTorch's index instead, e.g.:
+#   pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu126
+torch==2.11.0
+torchvision==0.26.0    # image_nn/nn_slike.py
+
+# --- Image classification subsystem (image_nn/, image_classification/) ---
+timm>=1.0              # EfficientNet backbone
+flask>=3.0             # image_classification/predict.py web app
+pillow==12.0.0         # PIL, image_classification/predict.py

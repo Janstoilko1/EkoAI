@@ -1,0 +1,22 @@
+# Runs automatically before every `git commit` (after `pre-commit install`).
+# Uses the locally installed ruff/pytest (language: system) so no hook repos
+# are downloaded. If a hook fails, the commit is aborted.
+#
+# Setup once:   pip install pre-commit  &&  pre-commit install
+# Run manually: pre-commit run --all-files
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff (lint)
+        entry: python -m ruff check .
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: pytest
+        name: pytest (headless tests)
+        entry: python -m pytest -q
+        language: system
+        types: [python]
+        pass_filenames: false
