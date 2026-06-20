@@ -738,7 +738,7 @@ def visualize_triangles(vertices: np.ndarray, triangles: np.ndarray):
     plt.show()
 
 
-def visualize_voxels(material_voxels: np.ndarray, max_voxels_to_show: int = 200_000):
+def visualize_voxels(material_voxels: np.ndarray, max_voxels_to_show: int = 500_000):
     import matplotlib.pyplot as plt
 
     filled = material_voxels.astype(bool)
