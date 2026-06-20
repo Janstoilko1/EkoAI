@@ -9,12 +9,12 @@ BAUDRATE = 9600     # zamenjaj, če imaš drugo hitrost
 OUTPUT_FOLDER = Path(r"C:\Users\Jan\OneDrive - Univerza v Mariboru\Desktop\EkoAI\Audio_logs\steklo")
 OUTPUT_FOLDER.mkdir(exist_ok=True)
 
-FIRST_LOG = 10
-LAST_LOG = 31
+FIRST_LOG = 1
+LAST_LOG = 9
 
 # Tukaj nastavi ukaz, ki ga tvoj STM32 pričakuje.
 # Poskusi eno od variant:
-GET_COMMAND_TEMPLATE = "GET LOG0{num}.BIN\r\n"
+GET_COMMAND_TEMPLATE = "GET LOG00{num}.BIN\r\n"
 # GET_COMMAND_TEMPLATE = "GET LOG{num}\r\n"
 # GET_COMMAND_TEMPLATE = "GET {num}\r\n"
 
@@ -52,7 +52,7 @@ with serial.Serial(PORT, BAUDRATE, timeout=0.2) as ser:
         command = GET_COMMAND_TEMPLATE.format(num=num)
         data = read_log_from_stm(ser, command)
 
-        output_file = OUTPUT_FOLDER / f"LOG0{num}.BIN"
+        output_file = OUTPUT_FOLDER / f"Steklen_kozarcek{num + 34}.BIN"
 
         with open(output_file, "wb") as f:
             f.write(data)

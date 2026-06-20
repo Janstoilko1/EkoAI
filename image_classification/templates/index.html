@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Klasifikator odpadkov</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0f0f0f;
+  --surface: #1a1a1a;
+  --surface2: #242424;
+  --border: #2e2e2e;
+  --text: #f0ede8;
+  --muted: #6b6b6b;
+  --glass-color: #4a9eff;
+  --paper-color: #7ec87e;
+  --plastic-color: #ff8c42;
+}
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.container {
+  width: 100%;
+  max-width: 520px;
+}
+
+header {
+  margin-bottom: 2.5rem;
+}
+
+.label {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 0.4rem;
+}
+
+h1 {
+  font-size: 26px;
+  font-weight: 300;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+h1 span {
+  font-weight: 500;
+}
+
+.drop-zone {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 3rem 2rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: var(--surface);
+  position: relative;
+  overflow: hidden;
+}
+
+.drop-zone::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 0%, rgba(74,158,255,0.04) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.drop-zone:hover {
+  border-color: #3d3d3d;
+  background: var(--surface2);
+}
+
+.drop-zone.drag-over {
+  border-color: var(--glass-color);
+  background: rgba(74,158,255,0.05);
+}
+
+.drop-icon {
+  width: 40px;
+  height: 40px;
+  margin: 0 auto 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.drop-icon svg { stroke: var(--muted); }
+
+.drop-text {
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.drop-text strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+#fileInput { display: none; }
+
+.preview-section {
+  display: none;
+  margin-top: 1.5rem;
+}
+
+.preview-img-wrap {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  aspect-ratio: 4/3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-img-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.result-section {
+  display: none;
+  margin-top: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.result-header {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.result-badge {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 99px;
+  border: 1px solid currentColor;
+}
+
+.result-name {
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.probs {
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.prob-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 44px;
+  align-items: center;
+  gap: 12px;
+}
+
+.prob-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.prob-track {
+  height: 3px;
+  background: var(--surface2);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.prob-fill {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.prob-val {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  color: var(--text);
+  text-align: right;
+}
+
+.loading {
+  display: none;
+  margin-top: 1.5rem;
+  text-align: center;
+  padding: 1.5rem;
+}
+
+.loading-dots {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.loading-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+.loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.2; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+.error-msg {
+  display: none;
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: rgba(255,80,80,0.08);
+  border: 1px solid rgba(255,80,80,0.2);
+  border-radius: 8px;
+  font-size: 13px;
+  color: #ff8080;
+}
+
+.reset-btn {
+  display: none;
+  margin-top: 1rem;
+  width: 100%;
+  padding: 0.65rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.reset-btn:hover {
+  border-color: #3d3d3d;
+  color: var(--text);
+}
+
+.color-glass   { color: var(--glass-color); }
+.color-paper   { color: var(--paper-color); }
+.color-plastic { color: var(--plastic-color); }
+.fill-glass    { background: var(--glass-color); }
+.fill-paper    { background: var(--paper-color); }
+.fill-plastic  { background: var(--plastic-color); }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <p class="label">Klasifikator odpadkov</p>
+    <h1>Kateri <span>odpadek</span> je to?</h1>
+  </header>
+
+  <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+    <div class="drop-icon">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+    </div>
+    <p class="drop-text"><strong>Klikni za nalaganje</strong> ali povleci sliko sem<br>JPG, PNG, JPEG</p>
+  </div>
+  <input type="file" id="fileInput" accept=".jpg,.jpeg,.png">
+
+  <div class="preview-section" id="previewSection">
+    <div class="preview-img-wrap">
+      <img id="previewImg" alt="Predogled slike">
+    </div>
+  </div>
+
+  <div class="loading" id="loading">
+    <div class="loading-dots">
+      <span></span><span></span><span></span>
+    </div>
+  </div>
+
+  <div class="error-msg" id="errorMsg"></div>
+
+  <div class="result-section" id="resultSection">
+    <div class="result-header">
+      <div>
+        <p class="label" style="margin-bottom:4px;">Klasifikacija</p>
+        <p class="result-name" id="resultName"></p>
+      </div>
+      <span class="result-badge" id="resultBadge"></span>
+    </div>
+    <div class="probs" id="probBars"></div>
+  </div>
+
+  <button class="reset-btn" id="resetBtn">— Nova slika —</button>
+</div>
+
+<script>
+const labelsSlo = { glass: 'Steklo', paper: 'Papir', plastic: 'Embalaža' };
+const colorClass = { glass: 'glass', paper: 'paper', plastic: 'plastic' };
+
+const dropZone    = document.getElementById('dropZone');
+const fileInput   = document.getElementById('fileInput');
+const previewSection = document.getElementById('previewSection');
+const previewImg  = document.getElementById('previewImg');
+const loading     = document.getElementById('loading');
+const resultSection = document.getElementById('resultSection');
+const resultName  = document.getElementById('resultName');
+const resultBadge = document.getElementById('resultBadge');
+const probBars    = document.getElementById('probBars');
+const errorMsg    = document.getElementById('errorMsg');
+const resetBtn    = document.getElementById('resetBtn');
+
+function handleFile(file) {
+  if (!file || !file.type.startsWith('image/')) {
+    showError('Prosim naloži sliko (JPG ali PNG).');
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    previewImg.src = e.target.result;
+    previewSection.style.display = 'block';
+    resultSection.style.display = 'none';
+    errorMsg.style.display = 'none';
+    loading.style.display = 'block';
+    resetBtn.style.display = 'none';
+  };
+  reader.readAsDataURL(file);
+
+  const formData = new FormData();
+  formData.append('image', file);
+
+  fetch('/predict', { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(data => {
+      loading.style.display = 'none';
+      if (data.error) { showError(data.error); return; }
+      showResult(data);
+    })
+    .catch(() => {
+      loading.style.display = 'none';
+      showError('Napaka pri povezavi s strežnikom.');
+    });
+}
+
+function showResult(data) {
+  const cls = data.razred;
+  const col = colorClass[cls];
+
+  resultName.textContent = labelsSlo[cls] || cls;
+  resultName.className = 'result-name color-' + col;
+
+  resultBadge.textContent = cls.toUpperCase();
+  resultBadge.className = 'result-badge color-' + col;
+
+  probBars.innerHTML = '';
+  Object.entries(data.verjetnosti).forEach(([key, pct]) => {
+    const c = colorClass[key];
+    const row = document.createElement('div');
+    row.className = 'prob-row';
+    row.innerHTML = `
+      <span class="prob-label">${labelsSlo[key] || key}</span>
+      <div class="prob-track">
+        <div class="prob-fill fill-${c}" style="width:0%"></div>
+      </div>
+      <span class="prob-val">${pct.toFixed(1)}%</span>
+    `;
+    probBars.appendChild(row);
+    setTimeout(() => {
+      row.querySelector('.prob-fill').style.width = pct + '%';
+    }, 50);
+  });
+
+  resultSection.style.display = 'block';
+  resetBtn.style.display = 'block';
+}
+
+function showError(msg) {
+  errorMsg.textContent = msg;
+  errorMsg.style.display = 'block';
+  resetBtn.style.display = 'block';
+}
+
+resetBtn.addEventListener('click', () => {
+  previewSection.style.display = 'none';
+  resultSection.style.display = 'none';
+  errorMsg.style.display = 'none';
+  resetBtn.style.display = 'none';
+  fileInput.value = '';
+});
+
+fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  handleFile(e.dataTransfer.files[0]);
+});
+</script>
+</body>
+</html>

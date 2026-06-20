@@ -8,6 +8,9 @@ import string
 import sounddevice as sd
 import scipy.signal as sp_signal
 from pathlib import Path
+from scipy.signal import butter, sosfilt
+
+
 @dataclass
 class Paket:
 	id: int      
@@ -270,29 +273,27 @@ def sestavi_podatke(packets: np.ndarray, id: int = 4):
     return signal, Fvz
 
 def obdelaj_vse(surova_mapa: str, obdelana_mapa: str):
-    """Za implementacijo preberi README.md"""
     for razred in RAZREDI:
-        vhodna = Path(surova_mapa) / razred
-        izhodna = Path(obdelana_mapa) / razred
-        izhodna.mkdir(parents=True, exist_ok=True)
-
+        vhodna_razred = Path(surova_mapa) / razred
         print(f"\n=== Obdelujem razred: {razred} ===")
 
-        for pot in sorted(vhodna.glob("*.BIN")):
+        for pot in sorted(vhodna_razred.glob("**/*")):
             if not pot.is_file():
                 continue
 
-            print(f"\nObdelujem: {pot} ({pot.stat().st_size} bajtov)")
+            podrazred = pot.parent.name
+            izhodna = Path(obdelana_mapa) / razred / podrazred
+            izhodna.mkdir(parents=True, exist_ok=True)
+
+            print(f"\nObdelujem: {razred}/{podrazred}/{pot.name} ({pot.stat().st_size} bajtov)")
 
             with open(pot, "rb") as f:
                 data = f.read()
 
-            # zelo majhne datoteke skoraj zagotovo niso pravi log
             if len(data) < 20:
                 print(f"SKIP: datoteka je premajhna: {pot}")
                 continue
 
-            # če je notri tekst ERROR, to ni pravi BIN log
             if b"ERROR" in data[:200]:
                 print(f"SKIP: datoteka vsebuje ERROR tekst: {pot}")
                 print(data[:200].decode(errors="replace"))
@@ -328,10 +329,10 @@ def obdelaj_vse(surova_mapa: str, obdelana_mapa: str):
                 print(f"Napaka: {type(e).__name__}: {e}")
                 continue
 
-            Fvz = Fvz * 0.18
-            Fvz = round(Fvz)
+            remove = Fvz * 0.18
+            remove = round(remove)
 
-            signal = signal[Fvz:]
+            signal = signal[remove:]
 
             for i in range(len(signal)):
                 if signal[i] < 0:
@@ -342,20 +343,28 @@ def obdelaj_vse(surova_mapa: str, obdelana_mapa: str):
             start, end = najdi_dogodek(signal, Fvz)
 
             spektogram = signal_v_spektogram(signal, start, end, Fvz, normalize_16bit=True)
-            np.save(izhodna / (pot.name + ".npy"), spektogram)
-            np.save(izhodna / (pot.name + "_freq.npy"), freq_mask(spektogram))
+            if pot.name.endswith(".BIN"):
+                np.save(izhodna / (pot.name + ".npy"), spektogram)
+                np.save(izhodna / (pot.name + "_freq.npy"), signal_v_spektogram(freq_mask(signal, Fvz), start, end, Fvz, normalize_16bit=True))
 
-            for aug_signal, suffix in augmentiraj_podatke(signal, Fvz):
-                aug_spec = signal_v_spektogram(aug_signal, start, end, Fvz, normalize_16bit=True)
-                np.save(izhodna / (pot.name + suffix + ".npy"), aug_spec)
-                np.save(izhodna / (pot.name + suffix + "_freq.npy"), freq_mask(aug_spec))
+                for aug_signal, suffix in augmentiraj_podatke(signal, Fvz):
+                    aug_spec = signal_v_spektogram(aug_signal, start, end, Fvz, normalize_16bit=True)
+                    np.save(izhodna / (pot.name + suffix + ".npy"), aug_spec)
+                    np.save(izhodna / (pot.name + suffix + "_freq.npy"), signal_v_spektogram(freq_mask(signal, Fvz), start, end, Fvz, normalize_16bit=True))
+            else:
+                np.save(izhodna / (pot.name + ".BIN.npy"), spektogram)
+                np.save(izhodna / (pot.name + ".BIN_freq.npy"), signal_v_spektogram(freq_mask(signal, Fvz), start, end, Fvz, normalize_16bit=True))
 
-def freq_mask(spec: np.ndarray, F: int = 10) -> np.ndarray:
-    spec = spec.copy()
-    f = np.random.randint(1, F + 1)
-    f0 = np.random.randint(0, spec.shape[0] - f)
-    spec[f0:f0 + f, :] = 0
-    return spec
+                for aug_signal, suffix in augmentiraj_podatke(signal, Fvz):
+                    aug_spec = signal_v_spektogram(aug_signal, start, end, Fvz, normalize_16bit=True)
+                    np.save(izhodna / (pot.name + ".BIN" + suffix + ".npy"), aug_spec)
+                    np.save(izhodna / (pot.name + ".BIN" + suffix + "_freq.npy"), signal_v_spektogram(freq_mask(signal, Fvz), start, end, Fvz, normalize_16bit=True))
+
+def freq_mask(spec: np.ndarray, Fvz, F: int = 10) -> np.ndarray:
+    f0 = np.random.randint(200, Fvz//2 - 200)
+    sos = butter(10, [f0-150, f0+150], btype='bandstop', output='sos', fs=Fvz)
+    return sosfilt(sos, spec)
+    
 
 def spectogram_norm(signal: np.ndarray) -> np.ndarray:
     Sxx_norm = (signal - signal.min()) / (signal.max() - signal.min() + 1e-8)
@@ -391,23 +400,25 @@ def signal_v_spektogram(signal: np.ndarray, startInd: int, endInd: int, Fvz: flo
 
 def pripravi_test_podatke(obdelana_mapa: str, test_mapa: str, delez: float = 0.1):
     for razred in RAZREDI:
-        vhodna = Path(obdelana_mapa) / razred
-        izhodna = Path(test_mapa) / razred
-        izhodna.mkdir(parents=True, exist_ok=True)
+        vhodna_razred = Path(obdelana_mapa) / razred
+        for podrazred_pot in sorted(vhodna_razred.iterdir()):
+            if not podrazred_pot.is_dir():
+                continue
+            podrazred = podrazred_pot.name
+            izhodna = Path(test_mapa) / razred / podrazred
+            izhodna.mkdir(parents=True, exist_ok=True)
 
-        # izberemo samo originalne posnetke (ne augmentirane)
-        baze = sorted(p for p in vhodna.glob("*.npy") if p.name.endswith(".BIN.npy"))
-        n = max(1, int(len(baze) * delez))
-        izbrane_baze = random.sample(baze, min(n, len(baze)))
+            baze = sorted(p for p in podrazred_pot.glob("*.npy") if p.name.endswith(".BIN.npy"))
+            n = max(1, int(len(baze) * delez))
+            izbrane_baze = random.sample(baze, min(n, len(baze)))
 
-        kopirano = 0
-        for baza in izbrane_baze:
-            # kopiramo original + vse augmentirane verzije tega posnetka
-            for pot in vhodna.glob(f"{baza.stem}*.npy"):
-                shutil.copy2(pot, izhodna / pot.name)
-                kopirano += 1
+            kopirano = 0
+            for baza in izbrane_baze:
+                for pot in podrazred_pot.glob(f"{baza.stem}*.npy"):
+                    shutil.copy2(pot, izhodna / pot.name)
+                    kopirano += 1
 
-        print(f"{razred}: {len(izbrane_baze)}/{len(baze)} posnetkov ({kopirano} datotek) -> test_data/{razred}")
+            print(f"{razred}/{podrazred}: {len(izbrane_baze)}/{len(baze)} posnetkov ({kopirano} datotek) -> test_data/{razred}/{podrazred}")
 
 if __name__ == "__main__":
 
